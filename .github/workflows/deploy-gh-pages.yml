@@ -1,0 +1,125 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          
+      - name: Install dependencies
+        working-directory: ./site
+        run: npm ci
+        
+      - name: Create sample data
+        working-directory: ./site
+        run: |
+          mkdir -p src/data
+          cat > src/data/articles.json << 'EOF'
+          {
+            "articles": [
+              {
+                "title": "マインドフルネス瞑想が脳の可塑性に与える影響：8週間のRCT研究",
+                "subtitle": "ハーバード大学による画期的な脳画像研究",
+                "summary_points": [
+                  "8週間の瞑想プログラムで海馬の灰白質密度が23%増加",
+                  "ストレス関連領域の扁桃体は縮小傾向",
+                  "1日わずか27分の実践で効果を確認"
+                ],
+                "evidence_level": "gold",
+                "research_details": {
+                  "sample_size": 342,
+                  "effect_size": 0.82,
+                  "confidence_interval": [0.65, 0.99]
+                },
+                "protocol": {
+                  "duration": "8週間",
+                  "frequency": "毎日27分",
+                  "steps": [
+                    "静かな場所で楽な姿勢で座る",
+                    "呼吸に意識を向ける（5分）",
+                    "体全体をスキャンする（10分）",
+                    "思考を観察し、呼吸に戻る（12分）"
+                  ],
+                  "expected_results": "4週目から集中力向上、6週目からストレス軽減を実感"
+                },
+                "slug": "20240701-mindfulness-brain-plasticity",
+                "category": "stress",
+                "published_date": "2024-07-01",
+                "original_article": {
+                  "source": "Nature Neuroscience",
+                  "url": "https://example.com/study1",
+                  "evaluation": {
+                    "total_score": 85,
+                    "breakdown": {
+                      "study_quality": 38,
+                      "effect_size": 20,
+                      "practical_applicability": 17,
+                      "safety": 10,
+                      "recency": 10
+                    }
+                  }
+                }
+              }
+            ],
+            "categories": {
+              "stress": [
+                {
+                  "slug": "20240701-mindfulness-brain-plasticity",
+                  "title": "マインドフルネス瞑想が脳の可塑性に与える影響",
+                  "date": "2024-07-01"
+                }
+              ]
+            },
+            "daily_index": {
+              "2024-07-01": [
+                {
+                  "slug": "20240701-mindfulness-brain-plasticity",
+                  "title": "マインドフルネス瞑想が脳の可塑性に与える影響",
+                  "category": "stress"
+                }
+              ]
+            },
+            "last_updated": "2024-07-01T00:00:00",
+            "total_articles": 1
+          }
+          EOF
+        
+      - name: Build site
+        working-directory: ./site
+        run: npm run build
+        
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./site/dist
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
