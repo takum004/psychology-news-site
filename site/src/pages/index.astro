@@ -1,0 +1,85 @@
+---
+import Layout from '../layouts/Layout.astro';
+import ArticleCard from '../components/ArticleCard.jsx';
+import articles from '../data/articles.json';
+---
+
+<Layout title="Psychology News - Latest Research and Insights">
+  <!-- Hero Section -->
+  <section class="bg-gradient-to-r from-primary-600 to-primary-800 text-white py-16">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="text-center">
+        <h1 class="text-4xl md:text-5xl font-bold mb-4">
+          Welcome to Psychology News
+        </h1>
+        <p class="text-xl md:text-2xl text-primary-100 max-w-3xl mx-auto">
+          Discover the latest breakthroughs in psychological research, mental health insights, and cognitive science developments.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Featured Banner -->
+  <section class="bg-secondary-50 py-8 border-b border-secondary-200">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="flex items-center justify-center space-x-2">
+        <svg class="w-6 h-6 text-secondary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+        </svg>
+        <p class="text-secondary-800 font-medium">
+          Stay informed with evidence-based psychological research and expert insights
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Articles Grid -->
+  <section class="py-12">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="flex items-center justify-between mb-8">
+        <h2 class="text-3xl font-bold text-gray-900">Latest Articles</h2>
+        <div class="flex space-x-4">
+          <button class="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-primary-500">
+            All Categories
+          </button>
+          <button class="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-primary-500">
+            Most Recent
+          </button>
+        </div>
+      </div>
+      
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+        {articles.map((article) => (
+          <ArticleCard article={article} client:load />
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- Newsletter Section -->
+  <section class="bg-gray-100 py-12 mt-12">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="bg-white rounded-lg shadow-lg p-8 text-center">
+        <h3 class="text-2xl font-bold text-gray-900 mb-4">
+          Stay Updated with Psychology News
+        </h3>
+        <p class="text-gray-600 mb-6 max-w-2xl mx-auto">
+          Get the latest research findings and insights delivered to your inbox weekly. Join our community of psychology enthusiasts and professionals.
+        </p>
+        <form class="max-w-md mx-auto flex gap-4">
+          <input 
+            type="email" 
+            placeholder="Enter your email" 
+            class="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+          />
+          <button 
+            type="submit" 
+            class="px-6 py-2 bg-primary-600 text-white font-medium rounded-md hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500"
+          >
+            Subscribe
+          </button>
+        </form>
+      </div>
+    </div>
+  </section>
+</Layout>

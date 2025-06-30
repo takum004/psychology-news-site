@@ -1,0 +1,62 @@
+[
+  {
+    "id": 1,
+    "title": "New Study Reveals How Memory Formation Works During Sleep",
+    "excerpt": "Researchers at Stanford University have discovered a crucial mechanism that explains how our brains consolidate memories during different stages of sleep, potentially opening new avenues for treating memory-related disorders.",
+    "author": "Dr. Sarah Johnson",
+    "date": "2024-03-15",
+    "category": "Neuroscience",
+    "readTime": "5 min read",
+    "image": "https://images.unsplash.com/photo-1559757148-5c350d0d3c56?w=800&h=400&fit=crop"
+  },
+  {
+    "id": 2,
+    "title": "Social Media's Impact on Teen Mental Health: A Comprehensive Analysis",
+    "excerpt": "A longitudinal study spanning 10 years provides new insights into how different social media platforms affect adolescent mental health, revealing both positive and negative impacts depending on usage patterns.",
+    "author": "Prof. Michael Chen",
+    "date": "2024-03-14",
+    "category": "Mental Health",
+    "readTime": "8 min read",
+    "image": "https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=800&h=400&fit=crop"
+  },
+  {
+    "id": 3,
+    "title": "Breakthrough in Understanding Anxiety Disorders Through Brain Imaging",
+    "excerpt": "Advanced neuroimaging techniques have identified specific brain circuit patterns associated with different types of anxiety disorders, paving the way for more personalized treatment approaches.",
+    "author": "Dr. Emily Rodriguez",
+    "date": "2024-03-13",
+    "category": "Clinical Psychology",
+    "readTime": "6 min read",
+    "image": "https://images.unsplash.com/photo-1559757148-5c350d0d3c56?w=800&h=400&fit=crop"
+  },
+  {
+    "id": 4,
+    "title": "The Psychology of Decision Making in Crisis Situations",
+    "excerpt": "New research examines how people make critical decisions under extreme stress, revealing surprising patterns that could improve emergency response training and crisis management protocols.",
+    "author": "Dr. James Wilson",
+    "date": "2024-03-12",
+    "category": "Cognitive Psychology",
+    "readTime": "7 min read",
+    "image": "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=800&h=400&fit=crop"
+  },
+  {
+    "id": 5,
+    "title": "Mindfulness Meditation Shows Promise in Treating Chronic Pain",
+    "excerpt": "A multi-center clinical trial demonstrates that structured mindfulness programs can significantly reduce chronic pain symptoms and improve quality of life without medication.",
+    "author": "Dr. Lisa Park",
+    "date": "2024-03-11",
+    "category": "Health Psychology",
+    "readTime": "4 min read",
+    "image": "https://images.unsplash.com/photo-1506126613408-eca07ce68773?w=800&h=400&fit=crop"
+  },
+  {
+    "id": 6,
+    "title": "Early Childhood Trauma's Long-term Effects on Brain Development",
+    "excerpt": "Groundbreaking research reveals how adverse childhood experiences physically alter brain structure and function, but also highlights the brain's remarkable capacity for healing and resilience.",
+    "author": "Dr. Robert Martinez",
+    "date": "2024-03-10",
+    "category": "Developmental Psychology",
+    "readTime": "9 min read",
+    "image": "https://images.unsplash.com/photo-1491013516836-7db643ee125a?w=800&h=400&fit=crop"
+  }
+]
