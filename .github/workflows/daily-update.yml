@@ -56,28 +56,18 @@ jobs:
     - name: Collect articles
       env:
         PUBMED_API_KEY: ${{ secrets.PUBMED_API_KEY }}
-        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       run: |
-        python -m src.main collect \
+        python -m src.main_nosummary collect \
           --date $(date +%Y-%m-%d) \
           --limit ${{ github.event.inputs.limit_articles || '5' }} \
           --output data/collected_articles.json
     
-    - name: Evaluate quality
+    - name: Evaluate and format articles
       run: |
-        python -m src.main evaluate \
+        python -m src.main_nosummary evaluate \
           --input data/collected_articles.json \
-          --output data/evaluated_articles.json \
-          --threshold 70
-    
-    - name: Generate summaries
-      env:
-        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      run: |
-        python -m src.main summarize \
-          --input data/evaluated_articles.json \
           --output data/summarized_articles.json \
-          --max-articles 3
+          --threshold 70
     
     - name: Check output
       id: check-output
@@ -128,7 +118,7 @@ jobs:
     
     - name: Update site data
       run: |
-        python -m src.main update-site \
+        python -m src.main_nosummary update-site \
           --articles data/summarized_articles.json \
           --site-dir site/
     
