@@ -1,0 +1,366 @@
+name: Test and Validate
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'requirements.txt'
+      - '.github/workflows/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'requirements.txt'
+  workflow_dispatch:
+    inputs:
+      verbose:
+        description: 'Enable verbose test output'
+        type: boolean
+        required: false
+        default: false
+
+env:
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '18'
+
+jobs:
+  python-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.10', '3.11']
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      
+      - name: Cache Python dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.local/lib/python${{ matrix.python-version }}/site-packages
+          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-${{ matrix.python-version }}-
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -r requirements.txt
+          pip install pytest-cov coverage
+      
+      - name: Lint with flake8
+        run: |
+          pip install flake8
+          # Stop on Python syntax errors or undefined names
+          flake8 src/ --count --select=E9,F63,F7,F82 --show-source --statistics
+          # Exit-zero treats all errors as warnings
+          flake8 src/ --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+      
+      - name: Type check with mypy
+        run: |
+          pip install mypy types-aiofiles types-requests
+          mypy src/ --ignore-missing-imports --no-strict-optional || true
+      
+      - name: Run unit tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          PUBMED_API_KEY: ${{ secrets.PUBMED_API_KEY }}
+        run: |
+          if [[ "${{ inputs.verbose }}" == "true" ]]; then
+            pytest tests/ -v --tb=short --cov=src --cov-report=xml --cov-report=term
+          else
+            pytest tests/ --tb=short --cov=src --cov-report=xml
+          fi
+      
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.xml
+          flags: unittests
+          name: codecov-${{ matrix.python-version }}
+          fail_ci_if_error: false
+
+  integration-test:
+    runs-on: ubuntu-latest
+    needs: python-tests
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Create test directories
+        run: |
+          mkdir -p test_data
+          mkdir -p test_site/src/data
+      
+      - name: Test collect command
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+          PUBMED_API_KEY: ${{ secrets.PUBMED_API_KEY }}
+        run: |
+          python -m src.main_nosummary collect \
+            --date $(date +%Y-%m-%d) \
+            --limit 2 \
+            --output test_data/test_collected.json
+          
+          # Verify output
+          if [[ ! -f "test_data/test_collected.json" ]]; then
+            echo "ERROR: Collection failed to create output file"
+            exit 1
+          fi
+          
+          echo "Collected articles:"
+          python -c "import json; data=json.load(open('test_data/test_collected.json')); print(f'Count: {len(data[\"articles\"])}')"
+      
+      - name: Test evaluate command
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: |
+          python -m src.main_nosummary evaluate \
+            --input test_data/test_collected.json \
+            --output test_data/test_evaluated.json \
+            --threshold 50
+          
+          # Verify output
+          if [[ ! -f "test_data/test_evaluated.json" ]]; then
+            echo "ERROR: Evaluation failed to create output file"
+            exit 1
+          fi
+          
+          echo "Evaluated articles:"
+          python -c "import json; data=json.load(open('test_data/test_evaluated.json')); print(f'Count: {len(data[\"articles\"])}')"
+      
+      - name: Test update-site command
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: |
+          python -m src.main_nosummary update-site \
+            --articles test_data/test_evaluated.json \
+            --site-dir test_site/
+          
+          # Verify output
+          if [[ ! -f "test_site/src/data/articles.json" ]]; then
+            echo "ERROR: Site update failed to create data file"
+            exit 1
+          fi
+          
+          echo "Site data updated:"
+          python -c "import json; data=json.load(open('test_site/src/data/articles.json')); print(f'Total articles: {data[\"total_articles\"]}')"
+      
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results
+          path: |
+            test_data/
+            test_site/src/data/
+          retention-days: 7
+
+  validate-site-build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: site/package-lock.json
+      
+      - name: Install dependencies
+        working-directory: ./site
+        run: |
+          npm ci
+          npm list
+      
+      - name: Create sample data
+        working-directory: ./site
+        run: |
+          mkdir -p src/data
+          cat > src/data/articles.json << 'EOF'
+          {
+            "articles": [
+              {
+                "title": "Test Article",
+                "subtitle": "A test article for build validation",
+                "summary_points": ["Point 1", "Point 2"],
+                "evidence_level": "High",
+                "research_details": {
+                  "sample_size": 100,
+                  "effect_size": 0.5
+                },
+                "slug": "20240101-test-article",
+                "category": "motivation",
+                "published_date": "2024-01-01"
+              }
+            ],
+            "categories": {
+              "motivation": [
+                {
+                  "slug": "20240101-test-article",
+                  "title": "Test Article",
+                  "date": "2024-01-01"
+                }
+              ]
+            },
+            "daily_index": {
+              "2024-01-01": [
+                {
+                  "slug": "20240101-test-article",
+                  "title": "Test Article",
+                  "category": "motivation"
+                }
+              ]
+            },
+            "last_updated": "2024-01-01T00:00:00",
+            "total_articles": 1
+          }
+          EOF
+      
+      - name: Lint Astro project
+        working-directory: ./site
+        run: |
+          npm run astro check || true
+      
+      - name: Build site
+        working-directory: ./site
+        run: |
+          npm run build
+          
+          # Verify build output
+          if [[ ! -d "dist" ]]; then
+            echo "ERROR: Build failed to create dist directory"
+            exit 1
+          fi
+          
+          echo "Build successful. Output:"
+          ls -la dist/
+      
+      - name: Test site preview
+        working-directory: ./site
+        run: |
+          # Start preview server in background
+          npm run preview &
+          PREVIEW_PID=$!
+          
+          # Wait for server to start
+          sleep 5
+          
+          # Test if server is responding
+          curl -f http://localhost:4321 || (kill $PREVIEW_PID && exit 1)
+          
+          # Stop preview server
+          kill $PREVIEW_PID
+          
+          echo "Site preview test passed"
+
+  validate-workflows:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Validate YAML syntax
+        run: |
+          # Install yamllint
+          pip install yamllint
+          
+          # Validate all workflow files
+          echo "Validating workflow YAML files..."
+          yamllint -d relaxed .github/workflows/*.yml
+      
+      - name: Check workflow permissions
+        run: |
+          # Check that workflows have appropriate permissions
+          for workflow in .github/workflows/*.yml; do
+            echo "Checking $workflow..."
+            
+            # Check for required permissions
+            if grep -q "permissions:" "$workflow"; then
+              echo "✓ Permissions section found"
+            else
+              echo "⚠ Warning: No permissions section in $workflow"
+            fi
+          done
+      
+      - name: Validate cron expressions
+        run: |
+          # Check cron expressions in workflows
+          for workflow in .github/workflows/*.yml; do
+            if grep -q "schedule:" "$workflow"; then
+              echo "Checking cron in $workflow..."
+              
+              # Extract and validate cron expression
+              cron=$(grep -A1 "schedule:" "$workflow" | grep "cron:" | sed "s/.*cron: '//g" | sed "s/'.*//g")
+              
+              if [[ -n "$cron" ]]; then
+                echo "Found cron: $cron"
+                # Basic validation (5 fields)
+                if [[ $(echo "$cron" | awk '{print NF}') -eq 5 ]]; then
+                  echo "✓ Cron expression appears valid"
+                else
+                  echo "✗ Invalid cron expression"
+                  exit 1
+                fi
+              fi
+            fi
+          done
+
+  security-scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Run security scan with Bandit
+        run: |
+          pip install bandit
+          bandit -r src/ -f json -o bandit-report.json || true
+          
+          # Display results
+          if [[ -f "bandit-report.json" ]]; then
+            python -m json.tool bandit-report.json
+          fi
+      
+      - name: Check for hardcoded secrets
+        run: |
+          # Simple check for potential secrets
+          echo "Checking for potential hardcoded secrets..."
+          
+          # Check for common secret patterns
+          if grep -r -E "(api_key|apikey|password|secret|token)\s*=\s*[\"'][^\"']+[\"']" src/ --include="*.py"; then
+            echo "⚠ Warning: Potential hardcoded secrets found"
+          else
+            echo "✓ No obvious hardcoded secrets found"
+          fi
+      
+      - name: Dependency vulnerability scan
+        run: |
+          pip install safety
+          safety check --json || true

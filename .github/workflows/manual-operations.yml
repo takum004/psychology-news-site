@@ -1,0 +1,356 @@
+name: Manual Operations
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 'Operation to perform'
+        required: true
+        type: choice
+        options:
+          - collect-only
+          - evaluate-only
+          - update-site-only
+          - full-pipeline
+          - cleanup-old-data
+          - generate-report
+      date_override:
+        description: 'Override date for collection (YYYY-MM-DD)'
+        required: false
+        type: string
+      article_limit:
+        description: 'Number of articles to process'
+        required: false
+        type: string
+        default: '5'
+      quality_threshold:
+        description: 'Quality score threshold (0-100)'
+        required: false
+        type: string
+        default: '70'
+      dry_run:
+        description: 'Perform dry run without saving'
+        type: boolean
+        required: false
+        default: false
+
+env:
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '18'
+
+jobs:
+  manual-operation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Setup operation environment
+        id: setup
+        run: |
+          # Set up directories
+          mkdir -p manual_run/{data,logs,reports}
+          
+          # Set operation date
+          if [[ -n "${{ inputs.date_override }}" ]]; then
+            OPERATION_DATE="${{ inputs.date_override }}"
+          else
+            OPERATION_DATE=$(date +%Y-%m-%d)
+          fi
+          
+          echo "operation-date=$OPERATION_DATE" >> $GITHUB_OUTPUT
+          echo "timestamp=$(date +%Y%m%d_%H%M%S)" >> $GITHUB_OUTPUT
+          echo "Operation date: $OPERATION_DATE"
+      
+      # Collect Only Operation
+      - name: Collect Articles
+        if: inputs.operation == 'collect-only' || inputs.operation == 'full-pipeline'
+        env:
+          PUBMED_API_KEY: ${{ secrets.PUBMED_API_KEY }}
+          EMAIL: ${{ secrets.EMAIL || 'noreply@github.com' }}
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: |
+          OUTPUT_FILE="manual_run/data/collected_${{ steps.setup.outputs.timestamp }}.json"
+          
+          echo "Collecting articles for date: ${{ steps.setup.outputs.operation-date }}"
+          
+          python -m src.main_nosummary collect \
+            --date "${{ steps.setup.outputs.operation-date }}" \
+            --limit "${{ inputs.article_limit }}" \
+            --output "$OUTPUT_FILE" \
+            2>&1 | tee "manual_run/logs/collect_${{ steps.setup.outputs.timestamp }}.log"
+          
+          # Show results
+          if [[ -f "$OUTPUT_FILE" ]]; then
+            echo "Collection successful!"
+            echo "Articles collected: $(python -c "import json; print(len(json.load(open('$OUTPUT_FILE'))['articles']))")"
+            
+            # Create summary
+            python << EOF
+          import json
+          with open('$OUTPUT_FILE') as f:
+              data = json.load(f)
+          
+          print("\nCollection Summary:")
+          print(f"Total articles: {len(data['articles'])}")
+          
+          sources = {}
+          for article in data['articles']:
+              source = article.get('source', 'Unknown')
+              sources[source] = sources.get(source, 0) + 1
+          
+          print("\nArticles by source:")
+          for source, count in sources.items():
+              print(f"  - {source}: {count}")
+          EOF
+          fi
+      
+      # Evaluate Only Operation
+      - name: Evaluate Articles
+        if: inputs.operation == 'evaluate-only'
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: |
+          # Find most recent collected file
+          LATEST_COLLECTED=$(ls -t manual_run/data/collected_*.json 2>/dev/null | head -1)
+          
+          if [[ -z "$LATEST_COLLECTED" ]]; then
+            echo "ERROR: No collected articles found. Run collect-only first."
+            exit 1
+          fi
+          
+          OUTPUT_FILE="manual_run/data/evaluated_${{ steps.setup.outputs.timestamp }}.json"
+          
+          echo "Evaluating articles from: $LATEST_COLLECTED"
+          
+          python -m src.main_nosummary evaluate \
+            --input "$LATEST_COLLECTED" \
+            --output "$OUTPUT_FILE" \
+            --threshold "${{ inputs.quality_threshold }}" \
+            2>&1 | tee "manual_run/logs/evaluate_${{ steps.setup.outputs.timestamp }}.log"
+          
+          # Show evaluation results
+          if [[ -f "$OUTPUT_FILE" ]]; then
+            python << EOF
+          import json
+          
+          with open('$LATEST_COLLECTED') as f:
+              original = json.load(f)
+          with open('$OUTPUT_FILE') as f:
+              evaluated = json.load(f)
+          
+          print(f"\nEvaluation Results:")
+          print(f"Original articles: {len(original['articles'])}")
+          print(f"Passed threshold: {len(evaluated['articles'])}")
+          print(f"Filtered out: {len(original['articles']) - len(evaluated['articles'])}")
+          print(f"Pass rate: {len(evaluated['articles']) / len(original['articles']) * 100:.1f}%")
+          
+          if evaluated['articles']:
+              print("\nPassed articles:")
+              for i, article in enumerate(evaluated['articles'][:5]):
+                  print(f"{i+1}. {article['title'][:60]}...")
+                  print(f"   Category: {article['category']}")
+                  print(f"   Evidence: {article['evidence_level']}")
+          EOF
+          fi
+      
+      # Full Pipeline Operation
+      - name: Run Full Pipeline
+        if: inputs.operation == 'full-pipeline'
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: |
+          # Use collected file from previous step
+          COLLECTED_FILE=$(ls -t manual_run/data/collected_*.json | head -1)
+          EVALUATED_FILE="manual_run/data/evaluated_${{ steps.setup.outputs.timestamp }}.json"
+          
+          # Evaluate
+          python -m src.main_nosummary evaluate \
+            --input "$COLLECTED_FILE" \
+            --output "$EVALUATED_FILE" \
+            --threshold "${{ inputs.quality_threshold }}"
+          
+          # Update site (if not dry run)
+          if [[ "${{ inputs.dry_run }}" != "true" ]]; then
+            # Create a test site directory
+            cp -r site manual_run/test_site
+            
+            python -m src.main_nosummary update-site \
+              --articles "$EVALUATED_FILE" \
+              --site-dir manual_run/test_site/
+            
+            echo "Site data updated in manual_run/test_site/"
+          else
+            echo "Dry run mode - skipping site update"
+          fi
+      
+      # Update Site Only Operation
+      - name: Update Site Data
+        if: inputs.operation == 'update-site-only'
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: |
+          # Find most recent evaluated file
+          LATEST_EVALUATED=$(ls -t manual_run/data/evaluated_*.json 2>/dev/null | head -1)
+          
+          if [[ -z "$LATEST_EVALUATED" ]]; then
+            echo "ERROR: No evaluated articles found. Run evaluate-only first."
+            exit 1
+          fi
+          
+          if [[ "${{ inputs.dry_run }}" != "true" ]]; then
+            # Create a test site directory
+            cp -r site manual_run/test_site
+            
+            python -m src.main_nosummary update-site \
+              --articles "$LATEST_EVALUATED" \
+              --site-dir manual_run/test_site/
+            
+            echo "Site updated with articles from: $LATEST_EVALUATED"
+            
+            # Show update summary
+            python << EOF
+          import json
+          
+          with open('manual_run/test_site/src/data/articles.json') as f:
+              site_data = json.load(f)
+          
+          print(f"\nSite Update Summary:")
+          print(f"Total articles: {site_data['total_articles']}")
+          print(f"Last updated: {site_data['last_updated']}")
+          
+          print(f"\nArticles by category:")
+          for cat, articles in site_data['categories'].items():
+              print(f"  - {cat}: {len(articles)}")
+          EOF
+          else
+            echo "Dry run mode - site update skipped"
+          fi
+      
+      # Cleanup Old Data Operation
+      - name: Cleanup Old Data
+        if: inputs.operation == 'cleanup-old-data'
+        run: |
+          echo "Cleaning up old data files..."
+          
+          # Define retention period (days)
+          RETENTION_DAYS=30
+          
+          # Find and list old files
+          echo "Files older than $RETENTION_DAYS days:"
+          find manual_run/data -name "*.json" -mtime +$RETENTION_DAYS -type f -ls
+          
+          if [[ "${{ inputs.dry_run }}" != "true" ]]; then
+            # Remove old files
+            find manual_run/data -name "*.json" -mtime +$RETENTION_DAYS -type f -delete
+            echo "Old files removed"
+          else
+            echo "Dry run mode - no files deleted"
+          fi
+      
+      # Generate Report Operation
+      - name: Generate Report
+        if: inputs.operation == 'generate-report'
+        run: |
+          REPORT_FILE="manual_run/reports/report_${{ steps.setup.outputs.timestamp }}.md"
+          
+          echo "Generating report..."
+          
+          cat > "$REPORT_FILE" << 'EOF'
+          # Psychology News Site - Operations Report
+          
+          Generated: $(date)
+          
+          ## Recent Operations
+          
+          ### Collected Files
+          EOF
+          
+          # List recent collected files
+          echo '```' >> "$REPORT_FILE"
+          ls -lht manual_run/data/collected_*.json 2>/dev/null | head -10 >> "$REPORT_FILE"
+          echo '```' >> "$REPORT_FILE"
+          
+          echo -e "\n### Evaluated Files" >> "$REPORT_FILE"
+          echo '```' >> "$REPORT_FILE"
+          ls -lht manual_run/data/evaluated_*.json 2>/dev/null | head -10 >> "$REPORT_FILE"
+          echo '```' >> "$REPORT_FILE"
+          
+          # Add statistics
+          echo -e "\n## Statistics" >> "$REPORT_FILE"
+          
+          # Count total articles
+          TOTAL_COLLECTED=0
+          TOTAL_EVALUATED=0
+          
+          for file in manual_run/data/collected_*.json; do
+            if [[ -f "$file" ]]; then
+              COUNT=$(python -c "import json; print(len(json.load(open('$file'))['articles']))" 2>/dev/null || echo 0)
+              TOTAL_COLLECTED=$((TOTAL_COLLECTED + COUNT))
+            fi
+          done
+          
+          for file in manual_run/data/evaluated_*.json; do
+            if [[ -f "$file" ]]; then
+              COUNT=$(python -c "import json; print(len(json.load(open('$file'))['articles']))" 2>/dev/null || echo 0)
+              TOTAL_EVALUATED=$((TOTAL_EVALUATED + COUNT))
+            fi
+          done
+          
+          echo "- Total articles collected: $TOTAL_COLLECTED" >> "$REPORT_FILE"
+          echo "- Total articles evaluated: $TOTAL_EVALUATED" >> "$REPORT_FILE"
+          
+          if [[ $TOTAL_COLLECTED -gt 0 ]]; then
+            PASS_RATE=$((TOTAL_EVALUATED * 100 / TOTAL_COLLECTED))
+            echo "- Overall pass rate: ${PASS_RATE}%" >> "$REPORT_FILE"
+          fi
+          
+          echo -e "\n---\n*Report generated by Manual Operations workflow*" >> "$REPORT_FILE"
+          
+          # Display report
+          cat "$REPORT_FILE"
+      
+      - name: Upload operation results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: manual-operation-${{ inputs.operation }}-${{ steps.setup.outputs.timestamp }}
+          path: manual_run/
+          retention-days: 7
+      
+      - name: Summary
+        if: always()
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          # Manual Operation: ${{ inputs.operation }}
+          
+          ## Parameters
+          - **Operation Date:** ${{ steps.setup.outputs.operation-date }}
+          - **Article Limit:** ${{ inputs.article_limit }}
+          - **Quality Threshold:** ${{ inputs.quality_threshold }}
+          - **Dry Run:** ${{ inputs.dry_run }}
+          
+          ## Results
+          Check the artifacts for detailed results.
+          
+          ### Files Generated
+          EOF
+          
+          # List generated files
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          find manual_run -name "*.json" -o -name "*.log" -o -name "*.md" | sort >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

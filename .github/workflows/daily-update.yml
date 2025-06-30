@@ -10,16 +10,21 @@ on:
         description: 'Run in debug mode'
         required: false
         default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
       limit_articles:
         description: 'Limit number of articles to process'
         required: false
         default: '5'
+        type: string
 
 permissions:
-  contents: write    # リポジトリへの書き込み権限
-  issues: write      # Issue作成権限  
-  pages: write       # GitHub Pagesへのデプロイ権限
-  id-token: write    # OIDC認証用
+  contents: write
+  issues: write
+  pages: write
+  id-token: write
 
 env:
   PYTHON_VERSION: '3.11'
@@ -31,6 +36,7 @@ jobs:
     
     outputs:
       articles-generated: ${{ steps.check-output.outputs.articles-count }}
+      status: ${{ steps.check-output.outputs.status }}
     
     steps:
     - name: Checkout repository
@@ -59,39 +65,96 @@ jobs:
     - name: Create data directory
       run: mkdir -p data
     
+    - name: Set environment variables
+      run: |
+        echo "COLLECTION_DATE=$(date +%Y-%m-%d)" >> $GITHUB_ENV
+        echo "PYTHONPATH=${{ github.workspace }}" >> $GITHUB_ENV
+    
     - name: Collect articles
+      id: collect
       env:
         PUBMED_API_KEY: ${{ secrets.PUBMED_API_KEY }}
       run: |
-        python src/main_nosummary.py collect \
-          --date $(date +%Y-%m-%d) \
-          --limit ${{ github.event.inputs.limit_articles || '5' }} \
-          --output data/collected_articles.json
+        echo "::group::Collecting articles"
+        python -m src.main_nosummary collect \
+          --date "${{ env.COLLECTION_DATE }}" \
+          --limit "${{ github.event.inputs.limit_articles || '5' }}" \
+          --output data/collected_articles.json 2>&1 | tee collect.log
+        
+        COLLECT_STATUS=${PIPESTATUS[0]}
+        echo "collect-status=$COLLECT_STATUS" >> $GITHUB_OUTPUT
+        
+        if [ $COLLECT_STATUS -ne 0 ]; then
+          echo "::error::Article collection failed"
+          exit 1
+        fi
+        echo "::endgroup::"
     
     - name: Evaluate and format articles
+      id: evaluate
+      if: steps.collect.outputs.collect-status == '0'
       run: |
-        python src/main_nosummary.py evaluate \
+        echo "::group::Evaluating articles"
+        python -m src.main_nosummary evaluate \
           --input data/collected_articles.json \
           --output data/summarized_articles.json \
-          --threshold 70
+          --threshold 70 2>&1 | tee evaluate.log
+        
+        EVALUATE_STATUS=${PIPESTATUS[0]}
+        echo "evaluate-status=$EVALUATE_STATUS" >> $GITHUB_OUTPUT
+        
+        if [ $EVALUATE_STATUS -ne 0 ]; then
+          echo "::error::Article evaluation failed"
+          exit 1
+        fi
+        echo "::endgroup::"
     
-    - name: Check output
+    - name: Check output and create summary
       id: check-output
+      if: always()
       run: |
+        echo "## Daily Update Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
         if [ -f "data/summarized_articles.json" ]; then
           ARTICLE_COUNT=$(python -c "import json; data=json.load(open('data/summarized_articles.json')); print(len(data.get('articles', [])))")
           echo "articles-count=$ARTICLE_COUNT" >> $GITHUB_OUTPUT
-          echo "Generated $ARTICLE_COUNT articles"
+          
+          if [ "$ARTICLE_COUNT" -gt 0 ]; then
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "✅ Generated $ARTICLE_COUNT articles" >> $GITHUB_STEP_SUMMARY
+            
+            # Add article titles to summary
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Articles:" >> $GITHUB_STEP_SUMMARY
+            python -c "
+import json
+data = json.load(open('data/summarized_articles.json'))
+for i, article in enumerate(data.get('articles', [])[:10], 1):
+    print(f'{i}. {article.get(\"title\", \"Unknown\")}')
+            " >> $GITHUB_STEP_SUMMARY
+          else
+            echo "status=no-articles" >> $GITHUB_OUTPUT
+            echo "⚠️ No articles passed quality threshold" >> $GITHUB_STEP_SUMMARY
+          fi
         else
           echo "articles-count=0" >> $GITHUB_OUTPUT
-          echo "No articles generated"
+          echo "status=failed" >> $GITHUB_OUTPUT
+          echo "❌ Failed to generate articles" >> $GITHUB_STEP_SUMMARY
         fi
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "- Date: ${{ env.COLLECTION_DATE }}" >> $GITHUB_STEP_SUMMARY
+        echo "- Limit: ${{ github.event.inputs.limit_articles || '5' }}" >> $GITHUB_STEP_SUMMARY
     
     - name: Upload artifacts
+      if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: processed-articles
-        path: data/
+        name: processed-articles-${{ env.COLLECTION_DATE }}
+        path: |
+          data/
+          *.log
         retention-days: 7
 
   build-and-deploy:
@@ -108,7 +171,7 @@ jobs:
     - name: Download artifacts
       uses: actions/download-artifact@v4
       with:
-        name: processed-articles
+        name: processed-articles-${{ env.COLLECTION_DATE }}
         path: data/
     
     - name: Setup Node.js
@@ -124,7 +187,8 @@ jobs:
     
     - name: Update site data
       run: |
-        python src/main_nosummary.py update-site \
+        echo "PYTHONPATH=${{ github.workspace }}" >> $GITHUB_ENV
+        python -m src.main_nosummary update-site \
           --articles data/summarized_articles.json \
           --site-dir site/
     
@@ -139,7 +203,8 @@ jobs:
         publish_dir: ./site/dist
         user_name: 'github-actions[bot]'
         user_email: 'github-actions[bot]@users.noreply.github.com'
-        commit_message: '🤖 Daily update: ${{ needs.collect-and-process.outputs.articles-generated }} articles'
+        commit_message: |
+          🤖 Daily update: ${{ needs.collect-and-process.outputs.articles-generated }} articles
 
   notify:
     needs: [collect-and-process, build-and-deploy]
@@ -150,16 +215,19 @@ jobs:
     - name: Check job status
       id: check
       run: |
-        if [[ "${{ needs.collect-and-process.result }}" == "failure" ]] || \
-           [[ "${{ needs.build-and-deploy.result }}" == "failure" ]]; then
+        COLLECT_RESULT="${{ needs.collect-and-process.result }}"
+        DEPLOY_RESULT="${{ needs.build-and-deploy.result }}"
+        ARTICLES_COUNT="${{ needs.collect-and-process.outputs.articles-generated }}"
+        
+        if [[ "$COLLECT_RESULT" == "failure" ]] || [[ "$DEPLOY_RESULT" == "failure" ]]; then
           echo "status=failure" >> $GITHUB_OUTPUT
           echo "message=Daily update failed!" >> $GITHUB_OUTPUT
-        elif [[ "${{ needs.collect-and-process.outputs.articles-generated }}" == "0" ]]; then
+        elif [[ "$ARTICLES_COUNT" == "0" ]]; then
           echo "status=warning" >> $GITHUB_OUTPUT
           echo "message=No articles generated today" >> $GITHUB_OUTPUT
         else
           echo "status=success" >> $GITHUB_OUTPUT
-          echo "message=Daily update completed successfully! Generated ${{ needs.collect-and-process.outputs.articles-generated }} articles" >> $GITHUB_OUTPUT
+          echo "message=Daily update completed successfully! Generated $ARTICLES_COUNT articles" >> $GITHUB_OUTPUT
         fi
     
     - name: Create Issue on Failure
@@ -168,34 +236,35 @@ jobs:
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         script: |
+          const date = new Date().toISOString().split('T')[0];
+          const title = `🚨 Daily Update Failed - ${date}`;
+          
+          const body = [
+            `Daily content update failed on ${date}.`,
+            '',
+            '**Job Results:**',
+            `- Collection & Processing: ${{ needs.collect-and-process.result }}`,
+            `- Build & Deploy: ${{ needs.build-and-deploy.result }}`,
+            '',
+            `**Articles Generated:** ${{ needs.collect-and-process.outputs.articles-generated }}`,
+            '',
+            `Please check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.`
+          ].join('\n');
+          
           try {
-            const date = new Date().toISOString().split('T')[0];
-            const collectResult = '${{ needs.collect-and-process.result }}';
-            const deployResult = '${{ needs.build-and-deploy.result }}';
-            const articlesGenerated = '${{ needs.collect-and-process.outputs.articles-generated }}';
-            const workflowUrl = '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}';
-            
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: '🚨 Daily Update Failed - ' + date,
-              body: `Daily content update failed on ${date}.
-            
-**Job Results:**
-- Collection & Processing: ${collectResult}
-- Build & Deploy: ${deployResult}
-
-**Articles Generated:** ${articlesGenerated}
-
-Please check the [workflow run](${workflowUrl}) for details.`,
+              title: title,
+              body: body,
               labels: ['bug', 'automation']
             });
           } catch (error) {
             console.error('Failed to create issue:', error);
-            // Don't fail the workflow if issue creation fails
+            core.warning('Failed to create issue for workflow failure');
           }
     
-    - name: Comment on Success
-      if: steps.check.outputs.status == 'success'
+    - name: Log final status
       run: |
-        echo "✅ ${{ steps.check.outputs.message }}"
+        echo "## Final Status: ${{ steps.check.outputs.status }}"
+        echo "${{ steps.check.outputs.message }}"
