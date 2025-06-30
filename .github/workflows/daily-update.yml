@@ -176,12 +176,12 @@ jobs:
               body: `Daily content update failed on ${new Date().toISOString().split('T')[0]}.
             
 **Job Results:**
-- Collection & Processing: ${{ needs.collect-and-process.result }}
-- Build & Deploy: ${{ needs.build-and-deploy.result }}
+- Collection & Processing: \${{ needs.collect-and-process.result }}
+- Build & Deploy: \${{ needs.build-and-deploy.result }}
 
-**Articles Generated:** ${{ needs.collect-and-process.outputs.articles-generated }}
+**Articles Generated:** \${{ needs.collect-and-process.outputs.articles-generated }}
 
-Please check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.`,
+Please check the [workflow run](\${{ github.server_url }}/\${{ github.repository }}/actions/runs/\${{ github.run_id }}) for details.`,
               labels: ['bug', 'automation']
             });
           } catch (error) {
