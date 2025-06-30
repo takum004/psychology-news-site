@@ -169,19 +169,25 @@ jobs:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         script: |
           try {
+            const date = new Date().toISOString().split('T')[0];
+            const collectResult = '${{ needs.collect-and-process.result }}';
+            const deployResult = '${{ needs.build-and-deploy.result }}';
+            const articlesGenerated = '${{ needs.collect-and-process.outputs.articles-generated }}';
+            const workflowUrl = '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}';
+            
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: '🚨 Daily Update Failed - ' + new Date().toISOString().split('T')[0],
-              body: `Daily content update failed on ${new Date().toISOString().split('T')[0]}.
+              title: '🚨 Daily Update Failed - ' + date,
+              body: `Daily content update failed on ${date}.
             
 **Job Results:**
-- Collection & Processing: \${{ needs.collect-and-process.result }}
-- Build & Deploy: \${{ needs.build-and-deploy.result }}
+- Collection & Processing: ${collectResult}
+- Build & Deploy: ${deployResult}
 
-**Articles Generated:** \${{ needs.collect-and-process.outputs.articles-generated }}
+**Articles Generated:** ${articlesGenerated}
 
-Please check the [workflow run](\${{ github.server_url }}/\${{ github.repository }}/actions/runs/\${{ github.run_id }}) for details.`,
+Please check the [workflow run](${workflowUrl}) for details.`,
               labels: ['bug', 'automation']
             });
           } catch (error) {
