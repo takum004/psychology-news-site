@@ -15,6 +15,12 @@ on:
         required: false
         default: '5'
 
+permissions:
+  contents: write    # リポジトリへの書き込み権限
+  issues: write      # Issue作成権限  
+  pages: write       # GitHub Pagesへのデプロイ権限
+  id-token: write    # OIDC認証用
+
 env:
   PYTHON_VERSION: '3.11'
   NODE_VERSION: '18'
@@ -57,14 +63,14 @@ jobs:
       env:
         PUBMED_API_KEY: ${{ secrets.PUBMED_API_KEY }}
       run: |
-        python -m src.main_nosummary collect \
+        python src/main_nosummary.py collect \
           --date $(date +%Y-%m-%d) \
           --limit ${{ github.event.inputs.limit_articles || '5' }} \
           --output data/collected_articles.json
     
     - name: Evaluate and format articles
       run: |
-        python -m src.main_nosummary evaluate \
+        python src/main_nosummary.py evaluate \
           --input data/collected_articles.json \
           --output data/summarized_articles.json \
           --threshold 70
@@ -82,7 +88,7 @@ jobs:
         fi
     
     - name: Upload artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: processed-articles
         path: data/
@@ -100,7 +106,7 @@ jobs:
         token: ${{ secrets.GITHUB_TOKEN }}
     
     - name: Download artifacts
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         name: processed-articles
         path: data/
@@ -118,7 +124,7 @@ jobs:
     
     - name: Update site data
       run: |
-        python -m src.main_nosummary update-site \
+        python src/main_nosummary.py update-site \
           --articles data/summarized_articles.json \
           --site-dir site/
     
