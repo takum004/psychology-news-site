@@ -39,12 +39,12 @@ jobs:
         token: ${{ secrets.GITHUB_TOKEN }}
     
     - name: Setup Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ env.PYTHON_VERSION }}
     
     - name: Cache Python dependencies
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ~/.cache/pip
         key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
@@ -133,7 +133,7 @@ jobs:
       run: npm run build
     
     - name: Deploy to GitHub Pages
-      uses: peaceiris/actions-gh-pages@v3
+      uses: peaceiris/actions-gh-pages@v4
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         publish_dir: ./site/dist
@@ -166,24 +166,28 @@ jobs:
       if: steps.check.outputs.status == 'failure'
       uses: actions/github-script@v7
       with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
         script: |
-          github.rest.issues.create({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            title: '🚨 Daily Update Failed - ' + new Date().toISOString().split('T')[0],
-            body: `
-            Daily content update failed on ${new Date().toISOString().split('T')[0]}.
+          try {
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '🚨 Daily Update Failed - ' + new Date().toISOString().split('T')[0],
+              body: `Daily content update failed on ${new Date().toISOString().split('T')[0]}.
             
-            **Job Results:**
-            - Collection & Processing: ${{ needs.collect-and-process.result }}
-            - Build & Deploy: ${{ needs.build-and-deploy.result }}
-            
-            **Articles Generated:** ${{ needs.collect-and-process.outputs.articles-generated }}
-            
-            Please check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.
-            `,
-            labels: ['bug', 'automation']
-          })
+**Job Results:**
+- Collection & Processing: ${{ needs.collect-and-process.result }}
+- Build & Deploy: ${{ needs.build-and-deploy.result }}
+
+**Articles Generated:** ${{ needs.collect-and-process.outputs.articles-generated }}
+
+Please check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.`,
+              labels: ['bug', 'automation']
+            });
+          } catch (error) {
+            console.error('Failed to create issue:', error);
+            // Don't fail the workflow if issue creation fails
+          }
     
     - name: Comment on Success
       if: steps.check.outputs.status == 'success'
